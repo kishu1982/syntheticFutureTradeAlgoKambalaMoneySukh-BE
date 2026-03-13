@@ -109,6 +109,7 @@ export class SyntheticPairSignalEngineService {
     'syntheticPairData',
     'syntheticPairMonitoringData.json',
   );
+  private thrashholdDivderFivedaysAvg = 2;
 
   //private signalState = new Map<string, boolean>();
 
@@ -232,13 +233,14 @@ export class SyntheticPairSignalEngineService {
     // ------------------------------------------------
     // DAY RANGE FILTER
     // ------------------------------------------------
-
-    if (currentDayMovePct > lastFiveDayAvgMovePct) {
+    const netMovingAvg =
+      lastFiveDayAvgMovePct / this.thrashholdDivderFivedaysAvg;
+    if (currentDayMovePct > netMovingAvg) {
       const today = this.getISTDate();
       const notifyKey = `${token}_${today}`;
 
       this.logger.warn(
-        `${symbol} signal blocked → DayMove ${currentDayMovePct}% > Avg5Day ${lastFiveDayAvgMovePct}%`,
+        `${symbol} signal blocked → DayMove ${currentDayMovePct}% > Avg5Day ${netMovingAvg}% after Division of ${lastFiveDayAvgMovePct} / ${this.thrashholdDivderFivedaysAvg}`,
       );
 
       if (!this.dayRangeBlockNotified.has(notifyKey)) {
@@ -254,7 +256,7 @@ Reason:
 Current Day Range exceeded 5 Day Average
 
 Current Day Move: <b>${currentDayMovePct}%</b>
-5 Day Avg Move: <b>${lastFiveDayAvgMovePct}%</b>
+5 Day Avg Move: <b>${netMovingAvg} after Division of ${lastFiveDayAvgMovePct} / ${this.thrashholdDivderFivedaysAvg} %</b>
 
 Signals disabled for today.
 
