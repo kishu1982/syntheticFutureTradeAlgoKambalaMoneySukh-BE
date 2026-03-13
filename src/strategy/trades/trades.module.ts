@@ -31,6 +31,7 @@ import { TelegramModule } from 'src/telegram/telegram.module';
     TradesService,
     TradesExecutionService,
     StoplossTargetService, // optional (only if used outside)
+    SyntheticPairTradeExecutionService,
   ],
   controllers: [TradesController],
 })

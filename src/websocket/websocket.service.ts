@@ -9,7 +9,9 @@ import { StrategyService } from 'src/strategy/strategy.service';
 import { WS_SUBSCRIPTIONS } from './subscriptions/ws.subscriptions';
 import { TradingviewTradeConfigService } from 'src/strategy/tradingview-trade-config/tradingview-trade-config.service';
 import { StoplossTargetService } from 'src/strategy/trades/stoploss-target/stoploss-target.service';
-import { read } from 'fs';
+import { SyntheticPairTradeExecutionService } from 'src/strategy/trades/SyntheticPairLogics/syntheticPairTradeExecution.service';
+
+
 
 const NorenWebSocket = require('norenrestapi/lib/websocket');
 
@@ -28,6 +30,7 @@ export class WebsocketService implements OnModuleInit, OnModuleDestroy {
     private readonly strategyService: StrategyService,
     private readonly tradeConfigService: TradingviewTradeConfigService,
     private readonly stoplossTargetService: StoplossTargetService,
+    private readonly syntheticService: SyntheticPairTradeExecutionService,
   ) {}
 
   /* ===============================
@@ -113,6 +116,9 @@ export class WebsocketService implements OnModuleInit, OnModuleDestroy {
           // 🔥 Forward tick to Strategy module
           this.strategyService.onTick(tick);
           this.stoplossTargetService.onTick(tick);
+           if (tick?.tk) {
+             this.syntheticService.handleRealtimeTick(tick); // sending data to synthetic pairs
+           }
 
           // console.log(
           //   `📈 PRICE | ${tick.e || ''}|${tick.tk || ''} | LTP: ${

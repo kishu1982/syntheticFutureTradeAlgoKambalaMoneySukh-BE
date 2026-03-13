@@ -1,45 +1,104 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Interval } from '@nestjs/schedule';
 import * as fs from 'fs';
 import * as path from 'path';
+import { isTradingAllowedForExchange } from 'src/common/utils/trading-time.util';
 import { TelegramService } from 'src/telegram/telegram.service';
+
+/*
+===========================================================
+SyntheticPairSignalEngineService
+===========================================================
+
+ROLE
+-----
+This service analyzes market state and generates
+ENTRY signals for synthetic pair trades.
+
+It does NOT manage exits.
+
+DATA FLOW
+---------
+SyntheticPairTradeExecutionService
+        ↓
+syntheticPairMonitoringData.json
+        ↓
+Signal Engine reads JSON every 1 minute
+        ↓
+Evaluate signal conditions
+        ↓
+If valid signal:
+   • mark tradeActive = true
+   • set entryPrice
+   • set entryTime
+   • set tradeSide
+        ↓
+Update JSON
+        ↓
+Send Telegram alert
+
+
+SIGNAL CONDITIONS
+-----------------
+Signals are triggered based on:
+
+• new day high / low
+• gap type (GAP_UP / GAP_DOWN / NO_GAP)
+• first candle structure
+• time conditions
+• day range filter
+
+
+ENTRY UPDATE
+------------
+When signal is generated:
+
+tradeActive = true
+tradeSide   = BUY | SELL
+entryPrice  = currentPrice
+entryTime   = timestamp
+maxProfitSeen = 0
+
+
+TELEGRAM ALERT
+--------------
+📢 SYNTHETIC SIGNAL
+Symbol
+Signal type
+Market context
+
+
+IMPORTANT
+---------
+Signal engine must NOT handle:
+
+• stoploss
+• vwap exit
+• trailing exit
+
+These are handled by:
+
+SyntheticPairRmsService
+
+
+EXECUTION LOOP
+--------------
+Runs every 1 seconds.
+
+
+INPUT FILE
+----------
+syntheticPairMonitoringData.json
+
+
+OUTPUT
+------
+Updates trade entry fields in JSON.
+*/
 
 @Injectable()
 export class SyntheticPairSignalEngineService {
-  /*
-Every 1 minute:
-
-Check if JSON exists
-
-Check if date == today
-
-Read index data
-
-Evaluate signals
-
-Prevent duplicate signals
-
-Send Telegram alerts
-
-Log signals
-
-///////////////////////////////////////////////
-
-SyntheticPairData Engine
-        ↓
-writes JSON every minute
-        ↓
-Signal Engine
-        ↓
-reads JSON every minute
-        ↓
-evaluates signals
-        ↓
-logs + telegram alert
-        ↓
-execution engine
-*/
-
   private readonly logger = new Logger(SyntheticPairSignalEngineService.name);
   private lastObservedLevels = new Map<string, { high: number; low: number }>();
   private dayRangeBlockNotified = new Map<string, string>();
@@ -51,9 +110,12 @@ execution engine
     'syntheticPairMonitoringData.json',
   );
 
-  private signalState = new Map<string, boolean>();
+  //private signalState = new Map<string, boolean>();
 
-  constructor(private readonly telegramService: TelegramService) {}
+  constructor(
+    private readonly telegramService: TelegramService,
+    private readonly configService: ConfigService,
+  ) {}
 
   private getISTTime(): Date {
     return new Date(
@@ -86,9 +148,13 @@ execution engine
     return this.timeToMinutes(time) >= 9 * 60 + 30;
   }
 
-  @Interval(60000)
+  @Interval(1000)
   async checkSignals() {
     try {
+      if (!isTradingAllowedForExchange('NFO', this.configService)) {
+        return;
+      }
+
       if (!fs.existsSync(this.FILE_PATH)) return;
 
       const raw = fs.readFileSync(this.FILE_PATH, 'utf8');
@@ -154,6 +220,16 @@ execution engine
     } = d;
 
     // ------------------------------------------------
+    // IF TRADE SIGNAL ALREADY GIVEN THEN RETURN
+    // Prevent new entry when trade already active.
+    // ------------------------------------------------
+
+    if (d.tradeActive) {
+      this.logger.warn(`${symbol} trade already active`);
+      return;
+    }
+
+    // ------------------------------------------------
     // DAY RANGE FILTER
     // ------------------------------------------------
 
@@ -195,16 +271,25 @@ Time: ${new Date().toLocaleString('en-IN', {
 
     // day range filter end
 
-    const stateKey = `${token}`;
+    //const stateKey = `${token}`;
 
-    if (!this.signalState.has(stateKey)) {
-      this.signalState.set(stateKey, false);
-    }
+    // if (!this.signalState.has(stateKey)) {
+    //   this.signalState.set(stateKey, false);
+    // }
 
-    if (this.signalState.get(stateKey)) return;
+    // if (this.signalState.get(stateKey)) return;
 
     let signal: string | null = null;
     let signalType: string | null = null;
+
+    // ------------------------------------------------
+    // GUARD FOR VWAP IF MISSING
+    // ------------------------------------------------
+
+    if (!d.vwap || d.vwap === 0) {
+      this.logger.warn(`${symbol} VWAP missing, entry blocked`);
+      return;
+    }
 
     // ------------------------------------------------
     // SIGNAL 1 SELL STRADDLE
@@ -300,9 +385,11 @@ Time: ${new Date().toLocaleString('en-IN', {
 
     if (!signal) return;
 
-    this.signalState.set(stateKey, true);
+    //this.signalState.set(stateKey, true);
 
     this.logger.log(`${symbol} ${signal}`);
+    // ADDING TRADE ENTRY LOGIC
+    this.updateTradeEntry(token, signalType);
 
     const message = `
 📢 <b>SYNTHETIC SIGNAL</b>
@@ -329,5 +416,43 @@ Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
 `;
 
     await this.telegramService.sendMessage(message);
+  }
+
+  //--------------------------------
+  // TRADE ENTRY LOGIC
+  //--------------------------------
+  private updateTradeEntry(token: string, signalType: string | null) {
+    if (!signalType) return;
+
+    try {
+      if (!fs.existsSync(this.FILE_PATH)) return;
+
+      const raw = fs.readFileSync(this.FILE_PATH, 'utf8');
+      const json = JSON.parse(raw);
+
+      const d = json.indices[token];
+      const now = this.getISTTime();
+
+      if (!d) return;
+
+      // prevent duplicate entry
+      if (d.tradeActive) return;
+
+      d.tradeActive = true;
+      d.tradeSide = signalType === 'BUY_STRADDLE' ? 'BUY' : 'SELL';
+      d.entryPrice = d.currentPrice;
+      // FIXED TIME
+      d.entryTime = now.toLocaleString('en-GB', {
+        timeZone: 'Asia/Kolkata',
+        hour12: false,
+      });
+      d.maxProfitSeen = 0;
+
+      fs.writeFileSync(this.FILE_PATH, JSON.stringify(json, null, 2));
+
+      this.logger.log(`TRADE ENTRY ${d.symbol} ${d.tradeSide}`);
+    } catch (err) {
+      this.logger.error('Trade entry update failed', err?.stack);
+    }
   }
 }

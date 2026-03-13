@@ -4,6 +4,87 @@ import { MarketService } from 'src/market/market.service';
 import { SyntheticPairData } from './syntheticPair.interface';
 import * as fs from 'fs';
 import * as path from 'path';
+import { ConfigService } from '@nestjs/config';
+import { isTradingAllowedForExchange } from 'src/common/utils/trading-time.util';
+
+/*
+===========================================================
+SyntheticPairTradeExecutionService
+===========================================================
+
+ROLE
+-----
+This service is responsible for collecting and maintaining
+live market data for synthetic pair monitoring.
+
+It does NOT generate signals and does NOT manage trades.
+It only updates market state.
+
+DATA FLOW
+---------
+Market API (MarketService)
+        ↓
+Fetch quotes + time series
+        ↓
+Calculate:
+   • currentPrice
+   • openPrice
+   • currentDayHigh
+   • currentDayLow
+   • VWAP (from time series)
+   • day movement %
+        ↓
+Update in-memory monitoringData
+        ↓
+Write to JSON
+syntheticPairMonitoringData.json
+
+
+EXECUTION FLOW
+--------------
+App Start
+   ↓
+onModuleInit()
+   ↓
+Backfill today's candles (09:15 → now)
+   ↓
+Initialize first candle data
+   ↓
+Every 1 minute:
+   monitorSyntheticPairs()
+        ↓
+   Update:
+      • current price
+      • day high/low
+      • VWAP
+   ↓
+   Save updated monitoring JSON
+
+
+IMPORTANT
+---------
+This service should NEVER modify:
+
+   • tradeActive
+   • entryPrice
+   • exitPrice
+   • exitReason
+
+Those fields are controlled by:
+
+   • SignalEngineService
+   • RMSService
+
+
+OUTPUT FILE
+-----------
+data/syntheticPairData/syntheticPairMonitoringData.json
+
+
+DEPENDENCIES
+------------
+MarketService
+*/
 
 @Injectable()
 export class SyntheticPairTradeExecutionService implements OnModuleInit {
@@ -17,6 +98,7 @@ export class SyntheticPairTradeExecutionService implements OnModuleInit {
   private readonly TIMESERIES_FOLDER = 'syntheticPairTimeSeries';
   private lastFiveDayAvgCache: Record<string, number> = {};
   private fiveDayAvgReady = false;
+  private lastSave = 0;
 
   private async sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -29,7 +111,10 @@ export class SyntheticPairTradeExecutionService implements OnModuleInit {
     { exchange: 'NFO', token: '51701', symbol: 'BANKNIFTY30MAR26F' },
   ];
 
-  constructor(private readonly marketService: MarketService) {}
+  constructor(
+    private readonly marketService: MarketService,
+    private readonly configService: ConfigService,
+  ) {}
 
   // ---------------------------------------------------
   // On module init, backfill today's time series data for all indices (if not already backfilled)
@@ -208,28 +293,43 @@ Normal 1-minute sync continues
     const baseDir = path.join(process.cwd(), 'data');
     const folder = path.join(baseDir, 'syntheticPairData');
 
-    // create base data folder
-    if (!fs.existsSync(baseDir)) {
-      fs.mkdirSync(baseDir);
-    }
-
-    // create syntheticPairData folder
-    if (!fs.existsSync(folder)) {
-      fs.mkdirSync(folder);
-    }
-
-    const now = this.getISTTime();
-
-    // const dateStr = now.toISOString().split('T')[0];
-    const dateStr = this.getISTDate();
-
-    const payload = {
-      date: dateStr,
-      generatedAt: now.toISOString(),
-      indices: this.monitoringData,
-    };
+    if (!fs.existsSync(baseDir)) fs.mkdirSync(baseDir);
+    if (!fs.existsSync(folder)) fs.mkdirSync(folder);
 
     const filePath = path.join(folder, 'syntheticPairMonitoringData.json');
+
+    let existing: any = null;
+
+    if (fs.existsSync(filePath)) {
+      existing = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    }
+
+    if (existing?.indices) {
+      for (const token in this.monitoringData) {
+        if (existing.indices[token]) {
+          const tradeFields = [
+            'tradeActive',
+            'tradeSide',
+            'entryPrice',
+            'entryTime',
+            'exitPrice',
+            'exitTime',
+            'exitReason',
+            'maxProfitSeen',
+          ];
+
+          for (const field of tradeFields) {
+            this.monitoringData[token][field] = existing.indices[token][field];
+          }
+        }
+      }
+    }
+
+    const payload = {
+      date: this.getISTDate(),
+      generatedAt: new Date().toISOString(),
+      indices: this.monitoringData,
+    };
 
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
 
@@ -244,6 +344,10 @@ Normal 1-minute sync continues
   //
   @Interval(60000)
   async monitorSyntheticPairs() {
+     if (!isTradingAllowedForExchange('NFO', this.configService)) {
+       return;
+     }
+
     if (this.isProcessing) {
       this.logger.debug('Synthetic pair loop already running. Skipping.');
       return;
@@ -362,6 +466,18 @@ Normal 1-minute sync continues
         // ✅ NEW for adding wwap data
         vwap,
         vwapWarning: warning,
+
+        // TRADE STATE
+        tradeActive: false,
+        tradeSide: null,
+        entryPrice: 0,
+        entryTime: '',
+
+        exitPrice: 0,
+        exitTime: '',
+        exitReason: '',
+
+        maxProfitSeen: 0,
       };
 
       this.logger.log(`Initialized ${index.symbol}`);
@@ -413,7 +529,7 @@ Normal 1-minute sync continues
       data.currentDayHighTime = highTime;
       data.currentDayLowTime = lowTime;
 
-      await this.sleep(200);
+      await this.sleep(500);
     }
   }
 
@@ -772,5 +888,184 @@ system continues running
     const vwap = Number(last?.intvwap || 0);
 
     return vwap;
+  }
+
+  // ---------------------------------------------------
+  // Realtime Tick Handler (Websocket)
+  // ---------------------------------------------------
+
+  // public handleRealtimeTick(tick: any) {
+  //   try {
+  //     // this.logger.debug(
+  //     //   `getting tick data test high for ${tick.tk}`,
+  //     //   tick.h ? tick.h : '',
+  //     // );
+  //     // this.logger.debug(
+  //     //   `getting tick data test Low for ${tick.tk}`,
+  //     //   tick?.l ? tick.l : '',
+  //     // );
+
+  //     // tick?.h
+  //     //   ? this.logger.debug(`High of token : ${tick.tk} is : ${tick.h}`)
+  //     //   : '';
+  //     // tick?.l
+  //     //   ? this.logger.debug(`low of token : ${tick.tk} is : ${tick.l}`)
+  //     //   : '';
+
+  //     if (!this.isAfter916()) return;
+
+  //     const token = String(tick.tk);
+
+  //     const data = this.monitoringData[token];
+
+  //     if (!data) return; // token not monitored
+
+  //     // const price = Number(tick?.lp || 0);
+
+  //     // if (!price) return;
+
+  //     const price = Number(tick?.lp);
+  //     if (!price || !tick?.tk) return;
+
+  //     // setting up high and low value
+  //     const wsHigh = Number(tick?.h ? tick.h : price);
+  //     const wsLow = Number(tick?.l ? tick.l : price);
+
+  //     const now = this.getISTTime();
+
+  //     const timeString = now
+  //       .toLocaleString('en-GB', { timeZone: 'Asia/Kolkata' })
+  //       .replace(',', '');
+
+  //     // update current price
+  //     data.currentPrice = price;
+
+  //     //temporarliy stoping as updating based on new data.
+  //     // update high
+  //     if (wsHigh > data.currentDayHigh) {
+  //       data.currentDayHigh = wsHigh;
+  //       data.currentDayHighTime = timeString;
+  //     }
+
+  //     // update low
+  //     if (wsLow < data.currentDayLow) {
+  //       data.currentDayLow = wsLow;
+  //       data.currentDayLowTime = timeString;
+  //     }
+
+  //     // update day move %
+  //     data.currentDayMovePct = this.calculateCurrentDayMove(
+  //       price,
+  //       data.prevClose,
+  //     );
+
+  //     // save file realtime
+  //     this.saveFile();
+  //   } catch (err) {
+  //     this.logger.error('Realtime tick update failed', err?.stack);
+  //   }
+  // }
+  public handleRealtimeTick(tick: any) {
+    try {
+      // timer check
+      if (!isTradingAllowedForExchange('NFO', this.configService)) {
+        return;
+      }
+
+      // log debug area
+
+      //     // this.logger.debug(
+      //     //   `getting tick data test high for ${tick.tk}`,
+      //     //   tick.h ? tick.h : '',
+      //     // );
+      //     // this.logger.debug(
+      //     //   `getting tick data test Low for ${tick.tk}`,
+      //     //   tick?.l ? tick.l : '',
+      //     // );
+
+      //     // tick?.h
+      //     //   ? this.logger.debug(`High of token : ${tick.tk} is : ${tick.h}`)
+      //     //   : '';
+      //     // tick?.l
+      //     //   ? this.logger.debug(`low of token : ${tick.tk} is : ${tick.l}`)
+      //     //   : '';
+
+      // log debug area ends
+
+      if (!this.isAfter916()) return;
+
+      if (!tick?.tk) return;
+
+      const token = String(tick.tk);
+
+      // IMPORTANT: only process tokens we monitor
+      const data = this.monitoringData[token];
+      if (!data) return;
+
+      const price = Number(tick?.lp);
+      if (!price || price <= 0) return;
+
+      const now = this.getISTTime();
+
+      const timeString = now
+        .toLocaleString('en-GB', { timeZone: 'Asia/Kolkata' })
+        .replace(',', '');
+
+      // -------------------------------
+      // Determine High / Low safely
+      // -------------------------------
+
+      const wsHigh = Math.max(price, Number(tick?.h ?? price));
+
+      const wsLow = Math.min(price, Number(tick?.l ?? price));
+
+      // -------------------------------
+      // Update current price
+      // -------------------------------
+
+      if (data.currentPrice !== price) {
+        data.currentPrice = price;
+      }
+
+      // -------------------------------
+      // Update Day High
+      // -------------------------------
+
+      if (wsHigh > data.currentDayHigh) {
+        data.currentDayHigh = wsHigh;
+        data.currentDayHighTime = timeString;
+      }
+
+      // -------------------------------
+      // Update Day Low
+      // -------------------------------
+
+      if (wsLow < data.currentDayLow) {
+        data.currentDayLow = wsLow;
+        data.currentDayLowTime = timeString;
+      }
+
+      // -------------------------------
+      // Update Day Move %
+      // -------------------------------
+
+      data.currentDayMovePct = this.calculateCurrentDayMove(
+        price,
+        data.prevClose,
+      );
+
+      // -------------------------------
+      // Throttle JSON file saves
+      // -------------------------------
+
+      const nowTs = Date.now();
+
+      if (nowTs - this.lastSave > 2000) {
+        this.saveFile();
+        this.lastSave = nowTs;
+      }
+    } catch (err) {
+      this.logger.error('Realtime tick update failed', err?.stack);
+    }
   }
 }
