@@ -314,7 +314,6 @@ The RMS updates exit related fields in:
 syntheticPairMonitoringData.json
 */
 
-
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Interval } from '@nestjs/schedule';
@@ -323,115 +322,6 @@ import * as path from 'path';
 import { TelegramService } from 'src/telegram/telegram.service';
 import { isTradingAllowedForExchange } from './../../../common/utils/trading-time.util';
 
-
-===========================================================
-SyntheticPairRmsService
-===========================================================
-
-ROLE
------
-This service manages trade risk and exits.
-
-It continuously monitors active trades and
-applies exit logic based on defined rules.
-
-DATA FLOW
----------
-syntheticPairMonitoringData.json
-        ↓
-RMS reads JSON every 2 seconds
-        ↓
-Check tradeActive
-        ↓
-Evaluate exit rules
-        ↓
-If exit triggered:
-   • mark tradeActive = false
-   • set exitPrice
-   • set exitTime
-   • set exitReason
-        ↓
-Update JSON
-        ↓
-Send Telegram exit alert
-
-
-EXIT CONDITIONS
----------------
-
-1️⃣ Day Reversal Stoploss
-
-SELL
-  exit if price > dayLow + X%
-
-BUY
-  exit if price < dayHigh - X%
-
-
-2️⃣ VWAP Exit
-
-SELL
-  exit if price > vwap + X%
- 
-BUY
-  exit if price < vwap - X%
-
-
-3️⃣ Profit Trailing
-
-If profit exceeds threshold:
-
-start trailing stop.
-
-Exit when profit retraces
-configured percentage.
-
-
-ENV VARIABLES
--------------
-SyntheticFutAlgo_StopLossDayReversalPct
-SyntheticFutAlgo_VwapExitPct
-SyntheticFutAlgo_ProfitTrailStartPct
-SyntheticFutAlgo_ProfitTrailRetracePct
-
-
-TELEGRAM ALERT
---------------
-🚨 SYNTHETIC EXIT
-
-Symbol
-Side
-Entry price
-Exit price
-Exit reason
-Timestamp
-
-
-EXECUTION LOOP
---------------
-Runs every 2 seconds.
-
-
-IMPORTANT
----------
-RMS should ONLY control:
-
-• tradeActive
-• exitPrice
-• exitTime
-• exitReason
-• maxProfitSeen
-
-
-INPUT FILE
-----------
-syntheticPairMonitoringData.json
-
-
-OUTPUT
-------
-Updates trade exit fields in JSON.
-*/
 @Injectable()
 export class SyntheticPairRmsService {
   private readonly logger = new Logger(SyntheticPairRmsService.name);
