@@ -344,6 +344,11 @@ export class SyntheticPairRmsService {
 
   @Interval(1000)
   async monitorTrades() {
+    // just to check its working
+    // this.logger.warn(
+    //   'RMS LOOP RUNNING ==========================================>',
+    // );
+
     if (!isTradingAllowedForExchange('NFO', this.config)) {
       return;
     }
@@ -405,6 +410,31 @@ export class SyntheticPairRmsService {
 
       const finalStop = Math.max(dayReversalStop, rangeStop);
 
+      this.logger.debug(`
+      🛑 DAY REVERSAL CHECK ${d.symbol}
+
+      Side: SELL
+      CurrentPrice: ${d.currentPrice}
+
+      DayReversalStop: ${dayReversalStop}
+      RangeStop: ${rangeStop}
+      FinalStop: ${finalStop}
+
+      Waiting Exit If Price > ${finalStop}
+      `);
+      this.logger.debug(`
+      🛑 DAY REVERSAL CHECK ${d.symbol}
+
+      Side: BUY
+      CurrentPrice: ${d.currentPrice}
+
+      DayReversalStop: ${dayReversalStop}
+      RangeStop: ${rangeStop}
+      FinalStop: ${finalStop}
+
+      Waiting Exit If Price < ${finalStop}
+      `);
+
       if (d.currentPrice > finalStop) {
         return 'DAY_REVERSAL_RANGE_SL';
       }
@@ -445,15 +475,36 @@ export class SyntheticPairRmsService {
       Number(this.config.get('SyntheticFutAlgo_VwapExitPct') ?? 0.1) / 100;
 
     if (d.tradeSide === 'SELL') {
-      if (d.currentPrice > d.vwap * (1 + pct)) {
+      const vwapExitLevel = d.vwap * (1 + pct);
+
+      this.logger.debug(`
+      📉 VWAP EXIT CHECK ${d.symbol}
+
+      Side: SELL
+      CurrentPrice: ${d.currentPrice}
+
+      VWAP Exit Above: ${vwapExitLevel}
+      `);
+
+      if (d.currentPrice > vwapExitLevel) {
         return 'VWAP_EXIT';
       }
     }
 
     if (d.tradeSide === 'BUY') {
-      if (d.currentPrice < d.vwap * (1 - pct)) {
-        return 'VWAP_EXIT';
-      }
+      const vwapExitLevel = d.vwap * (1 - pct);
+
+      this.logger.debug(`
+      📉 VWAP EXIT CHECK ${d.symbol}
+
+      Side: SELL
+      CurrentPrice: ${d.currentPrice}
+
+      VWAP Exit Below: ${vwapExitLevel}
+      `);
+      // if (d.currentPrice < d.vwap * (1 - pct)) {
+      //   return 'VWAP_EXIT';
+      // }
     }
 
     return null;
@@ -490,6 +541,19 @@ export class SyntheticPairRmsService {
     }
 
     const trigger = entry * startPct;
+
+    this.logger.debug(`
+      📈 PROFIT TRAIL CHECK ${d.symbol}
+
+      Entry: ${entry}
+      Current: ${d.currentPrice}
+
+      Profit: ${profit}
+      MaxProfitSeen: ${d.maxProfitSeen}
+
+      TrailStartTrigger: ${trigger}
+      RetraceAllowed: ${d.maxProfitSeen * retracePct}
+`);
 
     if (d.maxProfitSeen < trigger) return null;
 
@@ -543,6 +607,19 @@ Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
   // ------------------------------------------------
 
   private evaluateExit(d: any): string | null {
+    this.logger.debug(`
+🔎 RMS CHECK ${d.symbol}
+
+Side: ${d.tradeSide}
+Entry: ${d.entryPrice}
+Current: ${d.currentPrice}
+
+DayHigh: ${d.currentDayHigh}
+DayLow: ${d.currentDayLow}
+VWAP: ${d.vwap}
+MaxProfitSeen: ${d.maxProfitSeen}
+`);
+
     const dayReversal = this.dayReversalExit(d);
     if (dayReversal) return dayReversal;
 

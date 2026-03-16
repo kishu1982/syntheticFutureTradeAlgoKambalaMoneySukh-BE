@@ -344,9 +344,9 @@ Normal 1-minute sync continues
   //
   @Interval(60000)
   async monitorSyntheticPairs() {
-     if (!isTradingAllowedForExchange('NFO', this.configService)) {
-       return;
-     }
+    if (!isTradingAllowedForExchange('NFO', this.configService)) {
+      return;
+    }
 
     if (this.isProcessing) {
       this.logger.debug('Synthetic pair loop already running. Skipping.');
@@ -966,6 +966,7 @@ system continues running
   //   }
   // }
   public handleRealtimeTick(tick: any) {
+    //return; // temp return
     try {
       // timer check
       if (!isTradingAllowedForExchange('NFO', this.configService)) {
@@ -1031,7 +1032,7 @@ system continues running
       // Update Day High
       // -------------------------------
 
-      if (wsHigh > data.currentDayHigh) {
+      if (wsHigh > data.currentDayHigh && data.currentDayHigh > 0) {
         data.currentDayHigh = wsHigh;
         data.currentDayHighTime = timeString;
       }
@@ -1040,7 +1041,7 @@ system continues running
       // Update Day Low
       // -------------------------------
 
-      if (wsLow < data.currentDayLow) {
+      if (wsLow < data.currentDayLow && data.currentDayLow > 0) {
         data.currentDayLow = wsLow;
         data.currentDayLowTime = timeString;
       }

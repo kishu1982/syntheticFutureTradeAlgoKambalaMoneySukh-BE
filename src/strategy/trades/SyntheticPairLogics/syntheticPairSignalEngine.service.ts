@@ -102,6 +102,7 @@ export class SyntheticPairSignalEngineService {
   private readonly logger = new Logger(SyntheticPairSignalEngineService.name);
   private lastObservedLevels = new Map<string, { high: number; low: number }>();
   private dayRangeBlockNotified = new Map<string, string>();
+  private breakoutTriggered = new Set<string>(); // to avoid duplicate signals
 
   private readonly FILE_PATH = path.join(
     process.cwd(),
@@ -180,6 +181,8 @@ export class SyntheticPairSignalEngineService {
   // SIGNAL EVALUATION LOGIC
   // ------------------------------------------------
   private async evaluateSignals(token: string, d: any) {
+    // to avoide signals duplicate
+    if (this.breakoutTriggered.has(token)) return;
     // adding logic to track new highs and lows of the day
     const last = this.lastObservedLevels.get(token);
 
@@ -194,12 +197,36 @@ export class SyntheticPairSignalEngineService {
       return;
     }
 
-    if (d.currentDayHigh > last.high) newHigh = true;
-    if (d.currentDayLow < last.low) newLow = true;
+    const tolerance = Math.max(d.currentPrice * 0.0003, 8);
+    // ~0.03% or minimum 8 points
 
+    // BUY breakout detection
+    if (
+      d.currentPrice > last.high ||
+      (d.currentDayHigh > last.high &&
+        Math.abs(d.currentPrice - d.currentDayHigh) <= tolerance)
+    ) {
+      newHigh = true;
+    }
+
+    // SELL breakout detection
+    if (
+      d.currentPrice < last.low ||
+      (d.currentDayLow < last.low &&
+        Math.abs(d.currentPrice - d.currentDayLow) <= tolerance)
+    ) {
+      newLow = true;
+    }
+
+    if (newHigh && newLow) {
+      this.logger.warn(`${d.symbol} conflicting breakout detected`);
+      return;
+    }
+
+    // update stored levels
     this.lastObservedLevels.set(token, {
-      high: d.currentDayHigh,
-      low: d.currentDayLow,
+      high: Math.max(last.high, d.currentDayHigh),
+      low: Math.min(last.low, d.currentDayLow),
     });
 
     // evaluate signals based on new highs/lows and time conditions
@@ -387,17 +414,31 @@ Time: ${new Date().toLocaleString('en-IN', {
 
     if (!signal) return;
 
+    // adding token to this variable to avoid duplicate signals
+    this.breakoutTriggered.add(token);
+
     //this.signalState.set(stateKey, true);
 
     this.logger.log(`${symbol} ${signal}`);
     // ADDING TRADE ENTRY LOGIC
     this.updateTradeEntry(token, signalType);
 
-    const message = `
-📢 <b>SYNTHETIC SIGNAL</b>
+    // READ UPDATED DATA FOR MESSAGE in log and telegram
+    const rawUpdated = fs.readFileSync(this.FILE_PATH, 'utf8');
+    const jsonUpdated = JSON.parse(rawUpdated);
+    const updatedTrade = jsonUpdated.indices[token];
 
-Signal: ${signal}
-Type: ${signalType}
+    const entryPrice = updatedTrade?.entryPrice;
+    const tradeSide = updatedTrade?.tradeSide;
+
+    const message = `
+📢 <b>SYNTHETIC TRADE SIGNAL</b>
+
+Signal: <b>${signal}</b>
+Type: <b>${signalType}</b>
+
+Trade Side: <b>${tradeSide}</b>
+Entry Price: <b>${entryPrice}</b>
 
 Symbol: ${symbol}
 Token: ${token}
@@ -416,7 +457,6 @@ Trigger: ${newHigh ? 'NEW HIGH' : 'NEW LOW'}
 
 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
 `;
-
     await this.telegramService.sendMessage(message);
   }
 

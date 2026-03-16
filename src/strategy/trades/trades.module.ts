@@ -11,6 +11,7 @@ import { StoplossTargetService } from './stoploss-target/stoploss-target.service
 import { SyntheticPairTradeExecutionService } from './SyntheticPairLogics/syntheticPairTradeExecution.service';
 import { SyntheticPairSignalEngineService } from './SyntheticPairLogics/syntheticPairSignalEngine.service';
 import { TelegramModule } from 'src/telegram/telegram.module';
+import { SyntheticPairRmsService } from './SyntheticPairLogics/syntheticPairRms.service';
 
 @Module({
   imports: [
@@ -26,12 +27,14 @@ import { TelegramModule } from 'src/telegram/telegram.module';
     StoplossTargetService,
     SyntheticPairTradeExecutionService,
     SyntheticPairSignalEngineService,
+    SyntheticPairRmsService,
   ], // ✅ ADD THIS
   exports: [
     TradesService,
     TradesExecutionService,
     StoplossTargetService, // optional (only if used outside)
     SyntheticPairTradeExecutionService,
+    SyntheticPairRmsService,
   ],
   controllers: [TradesController],
 })
