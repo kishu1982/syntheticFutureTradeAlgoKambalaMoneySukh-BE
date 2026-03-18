@@ -103,6 +103,7 @@ export class SyntheticPairSignalEngineService {
   private lastObservedLevels = new Map<string, { high: number; low: number }>();
   private dayRangeBlockNotified = new Map<string, string>();
   private breakoutTriggered = new Set<string>(); // to avoid duplicate signals
+  private breakoutBuffer = 5; // points (you can tune this for getting near high and low)
 
   private readonly FILE_PATH = path.join(
     process.cwd(),
@@ -140,14 +141,6 @@ export class SyntheticPairSignalEngineService {
     const [h, m] = t.split(':').map(Number);
 
     return h * 60 + m;
-  }
-
-  private isBefore916(time: string) {
-    return this.timeToMinutes(time) <= 9 * 60 + 16;
-  }
-
-  private isAfter930(time: string) {
-    return this.timeToMinutes(time) >= 9 * 60 + 30;
   }
 
   @Interval(1000)
@@ -200,20 +193,18 @@ export class SyntheticPairSignalEngineService {
     const tolerance = Math.max(d.currentPrice * 0.0003, 8);
     // ~0.03% or minimum 8 points
 
-    // BUY breakout detection
+    // BUY breakout detection (tightened)
     if (
-      d.currentPrice > last.high ||
-      (d.currentDayHigh > last.high &&
-        Math.abs(d.currentPrice - d.currentDayHigh) <= tolerance)
+      d.currentDayHigh > last.high &&
+      d.currentPrice >= d.currentDayHigh - this.breakoutBuffer
     ) {
       newHigh = true;
     }
 
-    // SELL breakout detection
+    // SELL breakout detection (tightened)
     if (
-      d.currentPrice < last.low ||
-      (d.currentDayLow < last.low &&
-        Math.abs(d.currentPrice - d.currentDayLow) <= tolerance)
+      d.currentDayLow < last.low &&
+      d.currentPrice <= d.currentDayLow + this.breakoutBuffer
     ) {
       newLow = true;
     }
@@ -246,6 +237,14 @@ export class SyntheticPairSignalEngineService {
       currentDayHighTime,
       currentDayLowTime,
     } = d;
+
+    // get now time
+    const now = this.getISTTime();
+    const nowStr = now
+      .toLocaleString('en-GB', { timeZone: 'Asia/Kolkata' })
+      .replace(',', '');
+
+    const nowMin = this.timeToMinutes(nowStr);
 
     // ------------------------------------------------
     // IF TRADE SIGNAL ALREADY GIVEN THEN RETURN
@@ -323,14 +322,22 @@ Time: ${new Date().toLocaleString('en-IN', {
     // ------------------------------------------------
     // SIGNAL 1 SELL STRADDLE
     // ------------------------------------------------
+    const sell1Conditions = {
+      newLow,
+      gapDown: gapType === 'GAP_DOWN',
+      openEqFirstLow: openPrice === firstCandleLow,
+      firstLowBefore916: this.isBeforeTime(firstCandleLowTime, 9, 16),
+      timeAfter916: nowMin >= 9 * 60 + 16,
+    };
 
-    if (
-      newLow &&
-      gapType === 'GAP_DOWN' &&
-      openPrice === firstCandleHigh &&
-      firstCandleHigh === currentDayHigh &&
-      this.isBefore916(firstCandleHighTime)
-    ) {
+    this.logSignalDebug(symbol, 'SELL_SIGNAL_1', sell1Conditions, {
+      openPrice,
+      firstCandleLow,
+      currentDayLow,
+      lastLow: last.low,
+    });
+
+    if (Object.values(sell1Conditions).every(Boolean)) {
       signal = 'EntrySignal1_SellStraddle';
       signalType = 'SELL_STRADDLE';
     }
@@ -338,13 +345,19 @@ Time: ${new Date().toLocaleString('en-IN', {
     // ------------------------------------------------
     // SIGNAL 2 SELL STRADDLE
     // ------------------------------------------------
-    if (
-      newLow &&
-      gapType === 'GAP_DOWN' &&
-      openPrice !== firstCandleHigh &&
-      firstCandleHighTime === currentDayHighTime &&
-      this.isBefore916(firstCandleHighTime)
-    ) {
+
+    const sell2Conditions = {
+      newLow,
+      gapDown: gapType === 'GAP_DOWN',
+      openEqFirstLow: openPrice === firstCandleLow,
+      firstLowBefore916: this.isBeforeTime(firstCandleLowTime, 9, 16),
+      timeAfter920: nowMin >= 9 * 60 + 20,
+      highBelowPrevClose: currentDayHigh < d.prevClose,
+    };
+
+    this.logSignalDebug(symbol, 'SELL_SIGNAL_2', sell2Conditions);
+
+    if (Object.values(sell2Conditions).every(Boolean)) {
       signal = 'EntrySignal2_SellStraddle';
       signalType = 'SELL_STRADDLE';
     }
@@ -352,22 +365,50 @@ Time: ${new Date().toLocaleString('en-IN', {
     // ------------------------------------------------
     // SIGNAL 3 SELL STRADDLE
     // ------------------------------------------------
+    const sell3Conditions = {
+      newLow,
+      noGap: gapType === 'NO_GAP',
+      highFormedBefore921: this.isBeforeTime(currentDayHighTime, 9, 21),
+      timeAfter930: nowMin >= 9 * 60 + 30,
+    };
 
-    if (newLow && gapType === 'NO_GAP' && this.isAfter930(currentDayLowTime)) {
+    // this.logSignalDebug(symbol, 'SELL_SIGNAL_3', sell3Conditions, {
+    //   currentDayHighTime,
+    //   currentDayLow,
+    //   currentPrice: d.currentPrice,
+    // });
+    this.logSignalDebug(symbol, 'SELL_SIGNAL_3', sell3Conditions, {
+      currentDayHighTime,
+      currentDayLow,
+      currentPrice: d.currentPrice,
+      diff: d.currentPrice - currentDayLow,
+    });
+
+    if (Object.values(sell3Conditions).every(Boolean)) {
       signal = 'EntrySignal3_SellStraddle';
       signalType = 'SELL_STRADDLE';
     }
+
     // ------------------------------------------------
     // SIGNAL 1 BUY STRADDLE
     // ------------------------------------------------
 
-    if (
-      newHigh &&
-      gapType === 'GAP_UP' &&
-      openPrice === firstCandleLow &&
-      firstCandleLow === currentDayLow &&
-      this.isBefore916(firstCandleLowTime)
-    ) {
+    const buy1Conditions = {
+      newHigh,
+      gapUp: gapType === 'GAP_UP',
+      openEqFirstHigh: openPrice === firstCandleHigh,
+      firstHighBefore916: this.isBeforeTime(firstCandleHighTime, 9, 16),
+      timeAfter916: nowMin >= 9 * 60 + 16,
+    };
+
+    this.logSignalDebug(symbol, 'BUY_SIGNAL_1', buy1Conditions, {
+      openPrice,
+      firstCandleHigh,
+      currentDayHigh,
+      lastHigh: last.high,
+    });
+
+    if (Object.values(buy1Conditions).every(Boolean)) {
       signal = 'EntrySignal1_BuyStraddle';
       signalType = 'BUY_STRADDLE';
     }
@@ -375,13 +416,18 @@ Time: ${new Date().toLocaleString('en-IN', {
     // ------------------------------------------------
     // SIGNAL 2 BUY STRADDLE
     // ------------------------------------------------
-    if (
-      newHigh &&
-      gapType === 'GAP_UP' &&
-      openPrice !== firstCandleLow &&
-      firstCandleLowTime === currentDayLowTime &&
-      this.isBefore916(firstCandleLowTime)
-    ) {
+    const buy2Conditions = {
+      newHigh,
+      gapUp: gapType === 'GAP_UP',
+      openEqFirstHigh: openPrice === firstCandleHigh,
+      firstHighBefore916: this.isBeforeTime(firstCandleHighTime, 9, 16),
+      timeAfter920: nowMin >= 9 * 60 + 20,
+      lowAbovePrevClose: currentDayLow > d.prevClose,
+    };
+
+    this.logSignalDebug(symbol, 'BUY_SIGNAL_2', buy2Conditions);
+
+    if (Object.values(buy2Conditions).every(Boolean)) {
       signal = 'EntrySignal2_BuyStraddle';
       signalType = 'BUY_STRADDLE';
     }
@@ -389,12 +435,21 @@ Time: ${new Date().toLocaleString('en-IN', {
     // ------------------------------------------------
     // SIGNAL 3 BUY STRADDLE
     // ------------------------------------------------
+    const buy3Conditions = {
+      newHigh,
+      noGap: gapType === 'NO_GAP',
+      lowFormedBefore921: this.isBeforeTime(currentDayLowTime, 9, 21),
+      timeAfter930: nowMin >= 9 * 60 + 30,
+    };
 
-    if (
-      newHigh &&
-      gapType === 'NO_GAP' &&
-      this.isAfter930(currentDayHighTime)
-    ) {
+    this.logSignalDebug(symbol, 'BUY_SIGNAL_3', buy3Conditions, {
+      currentDayLowTime,
+      currentDayHigh,
+      currentPrice: d.currentPrice,
+      diff: currentDayHigh - d.currentPrice,
+    });
+
+    if (Object.values(buy3Conditions).every(Boolean)) {
       signal = 'EntrySignal3_BuyStraddle';
       signalType = 'BUY_STRADDLE';
     }
@@ -435,25 +490,36 @@ Time: ${new Date().toLocaleString('en-IN', {
 📢 <b>SYNTHETIC TRADE SIGNAL</b>
 
 Signal: <b>${signal}</b>
+Symbol: <b>${symbol}</b>
 Type: <b>${signalType}</b>
 
 Trade Side: <b>${tradeSide}</b>
 Entry Price: <b>${entryPrice}</b>
 
-Symbol: ${symbol}
-Token: ${token}
-Exchange: ${exchange}
+-------------------------
+📊 CONDITIONS MET
+-------------------------
 
-Gap: ${gapType}
+Gap Type: ${gapType}
+Open == FirstCandle: ${openPrice === firstCandleHigh || openPrice === firstCandleLow}
+
+FirstCandleTime: ${firstCandleHighTime}
+CurrentHighTime: ${currentDayHighTime}
+CurrentLowTime: ${currentDayLowTime}
+
+PrevClose: ${d.prevClose}
+
+NewHigh: ${newHigh}
+NewLow: ${newLow}
+
+-------------------------
+📈 MARKET DATA
+-------------------------
 
 Open: ${openPrice}
-FirstHigh: ${firstCandleHigh}
-FirstLow: ${firstCandleLow}
-
-CurrentHigh: ${currentDayHigh}
-CurrentLow: ${currentDayLow}
-
-Trigger: ${newHigh ? 'NEW HIGH' : 'NEW LOW'}
+High: ${currentDayHigh}
+Low: ${currentDayLow}
+Price: ${d.currentPrice}
 
 Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
 `;
@@ -495,6 +561,55 @@ Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
       this.logger.log(`TRADE ENTRY ${d.symbol} ${d.tradeSide}`);
     } catch (err) {
       this.logger.error('Trade entry update failed', err?.stack);
+    }
+  }
+
+  //------------------
+  // time check helper
+  //------------------
+  private isAfterTime(timeStr: string, h: number, m: number) {
+    return this.timeToMinutes(timeStr) >= h * 60 + m;
+  }
+
+  private isBeforeTime(timeStr: string, h: number, m: number) {
+    return this.timeToMinutes(timeStr) <= h * 60 + m;
+  }
+
+  // old timeing function
+  // private isBefore916(time: string) {
+  //   return this.timeToMinutes(time) <= 9 * 60 + 16;
+  // }
+
+  // private isAfter930(time: string) {
+  //   return this.timeToMinutes(time) >= 9 * 60 + 30;
+  // }
+
+  // ------------------
+  // Debug Helper
+  // ------------------
+  private logSignalDebug(
+    symbol: string,
+    signalName: string,
+    conditions: Record<string, boolean>,
+    meta?: Record<string, any>,
+  ) {
+    const failed = Object.entries(conditions)
+      .filter(([_, v]) => !v)
+      .map(([k]) => k);
+
+    if (failed.length === 0) {
+      this.logger.log(`✅ ${symbol} ${signalName} PASSED`);
+    } else {
+      this.logger.warn(
+        `❌ ${symbol} ${signalName} FAILED → ${failed.join(', ')}`,
+      );
+    }
+
+    // Optional detailed values (only when needed)
+    if (failed.length && meta) {
+      this.logger.debug(
+        `${symbol} ${signalName} DEBUG → ${JSON.stringify(meta)}`,
+      );
     }
   }
 }

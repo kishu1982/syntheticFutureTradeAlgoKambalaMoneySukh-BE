@@ -152,12 +152,12 @@ Normal 1-minute sync continues
   // ------------------------------------------------
   // updating five days data after every 5 min
   // ------------------------------------------------
-  // @Interval(1000 * 60 * 2)
+  // @Interval(1000 * 60 * 1)
   // async updateFiveDayData() {
   //   this.logger.debug('Updating last 5 day average cache every 2 minutes');
   //   await this.calculateLastFiveDayAverage();
   // }
-  @Interval(1000 * 60 * 5)
+  @Interval(1000 * 60 * 1)
   async retryFiveDayAverage() {
     if (this.fiveDayAvgReady) return;
 
@@ -525,6 +525,25 @@ Normal 1-minute sync continues
 
       data.currentDayHigh = high;
       data.currentDayLow = low;
+
+      // -------------------------------
+      // Dynamic GAP Adjustment (backup)
+      // -------------------------------
+
+      if (data.gapType === 'GAP_UP' && data.currentDayLow <= data.prevClose) {
+        this.logger.warn(`${data.symbol} GAP_UP → NO_GAP (series update)`);
+
+        data.gapType = 'NO_GAP';
+      }
+
+      if (
+        data.gapType === 'GAP_DOWN' &&
+        data.currentDayHigh >= data.prevClose
+      ) {
+        this.logger.warn(`${data.symbol} GAP_DOWN → NO_GAP (series update)`);
+
+        data.gapType = 'NO_GAP';
+      }
 
       data.currentDayHighTime = highTime;
       data.currentDayLowTime = lowTime;
@@ -1044,6 +1063,27 @@ system continues running
       if (wsLow < data.currentDayLow && data.currentDayLow > 0) {
         data.currentDayLow = wsLow;
         data.currentDayLowTime = timeString;
+      }
+
+      // -------------------------------
+      // Dynamic GAP Adjustment
+      // -------------------------------
+
+      // GAP UP → becomes NO_GAP if price fills gap
+      if (data.gapType === 'GAP_UP' && data.currentDayLow <= data.prevClose) {
+        this.logger.warn(`${data.symbol} GAP_UP → NO_GAP (gap filled)`);
+
+        data.gapType = 'NO_GAP';
+      }
+
+      // GAP DOWN → becomes NO_GAP if price fills gap
+      if (
+        data.gapType === 'GAP_DOWN' &&
+        data.currentDayHigh >= data.prevClose
+      ) {
+        this.logger.warn(`${data.symbol} GAP_DOWN → NO_GAP (gap filled)`);
+
+        data.gapType = 'NO_GAP';
       }
 
       // -------------------------------
