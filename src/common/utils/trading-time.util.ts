@@ -18,7 +18,7 @@ export function isTradingAllowedForExchange(
   }
 
   const startTime = configService.get<string>('TRADING_START_TIMES', '09:14');
-  const endTime = configService.get<string>('TRADING_END_TIME', '15:25');
+  const endTime = configService.get<string>('TRADING_END_TIME', '15:15');
 
   // 🔒 Break time config
   const breakEnabled =
@@ -26,10 +26,10 @@ export function isTradingAllowedForExchange(
 
   const breakStart = configService.get<string>(
     'TRADING_BREAK_START_TIME',
-    '13:15',
+    '12:45',
   );
 
-  const breakEnd = configService.get<string>('TRADING_BREAK_END_TIME', '13:45');
+  const breakEnd = configService.get<string>('TRADING_BREAK_END_TIME', '14:12');
 
   // Current IST time
   const now = new Date(
@@ -67,7 +67,9 @@ export function isTradingAllowedForExchange(
 
     // ❌ Inside break window → block trading
     if (now >= breakStartTime && now <= breakEndTime) {
-      console.log(`TradingTiming-Logic ⏸ Trading break time from ${breakStart} to ${breakEnd} IST`);
+      console.log(
+        `TradingTiming-Logic ⏸ Trading break time from ${breakStart} to ${breakEnd} IST`,
+      );
       return false;
     }
   }
