@@ -325,14 +325,15 @@ Time: ${new Date().toLocaleString('en-IN', {
     const sell1Conditions = {
       newLow,
       gapDown: gapType === 'GAP_DOWN',
-      openEqFirstLow: openPrice === firstCandleLow,
-      firstLowBefore916: this.isBeforeTime(firstCandleLowTime, 9, 16),
+      openEqFirstHigh: openPrice === firstCandleHigh,
+      firstHighBefore916: this.isBeforeTime(currentDayHighTime, 9, 16),
       timeAfter916: nowMin >= 9 * 60 + 16,
     };
 
     this.logSignalDebug(symbol, 'SELL_SIGNAL_1', sell1Conditions, {
       openPrice,
-      firstCandleLow,
+      firstCandleHigh,
+      currentDayHighTime,
       currentDayLow,
       lastLow: last.low,
     });
@@ -349,8 +350,11 @@ Time: ${new Date().toLocaleString('en-IN', {
     const sell2Conditions = {
       newLow,
       gapDown: gapType === 'GAP_DOWN',
-      openEqFirstLow: openPrice === firstCandleLow,
-      firstLowBefore916: this.isBeforeTime(firstCandleLowTime, 9, 16),
+      //openEqFirstLow: openPrice === firstCandleLow,
+      // firstLowBefore916: this.isBeforeTime(firstCandleLowTime, 9, 16),
+      // firstHighBefore916: this.isBeforeTime(firstCandleHighTime, 9, 16),
+      // DayLowBefore916: this.isBeforeTime(currentDayHighTime, 9, 16),
+      DayHighBefore916: this.isBeforeTime(currentDayHighTime, 9, 16),
       timeAfter920: nowMin >= 9 * 60 + 20,
       highBelowPrevClose: currentDayHigh < d.prevClose,
     };
@@ -396,14 +400,15 @@ Time: ${new Date().toLocaleString('en-IN', {
     const buy1Conditions = {
       newHigh,
       gapUp: gapType === 'GAP_UP',
-      openEqFirstHigh: openPrice === firstCandleHigh,
-      firstHighBefore916: this.isBeforeTime(firstCandleHighTime, 9, 16),
+      openEqFirstLow: openPrice === firstCandleLow,
+      firstLowBefore916: this.isBeforeTime(currentDayLowTime, 9, 16),
       timeAfter916: nowMin >= 9 * 60 + 16,
     };
 
     this.logSignalDebug(symbol, 'BUY_SIGNAL_1', buy1Conditions, {
       openPrice,
-      firstCandleHigh,
+      firstCandleLow,
+      currentDayLowTime,
       currentDayHigh,
       lastHigh: last.high,
     });
@@ -419,8 +424,11 @@ Time: ${new Date().toLocaleString('en-IN', {
     const buy2Conditions = {
       newHigh,
       gapUp: gapType === 'GAP_UP',
-      openEqFirstHigh: openPrice === firstCandleHigh,
-      firstHighBefore916: this.isBeforeTime(firstCandleHighTime, 9, 16),
+      // openEqFirstHigh: openPrice === firstCandleHigh,
+      // firstHighBefore916: this.isBeforeTime(firstCandleHighTime, 9, 16),
+      // firstLowBefore916: this.isBeforeTime(firstCandleLowTime, 9, 16),
+      DayLowBefore916: this.isBeforeTime(currentDayLowTime, 9, 16),
+      // DayHighBefore916: this.isBeforeTime(currentDayHighTime, 9, 16),
       timeAfter920: nowMin >= 9 * 60 + 20,
       lowAbovePrevClose: currentDayLow > d.prevClose,
     };
