@@ -334,6 +334,14 @@ Normal 1-minute sync continues
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
 
     this.logger.log(`Synthetic pair data saved → ${filePath}`);
+    this.logger.debug(
+      `Saving snapshot: ${Object.keys(this.monitoringData)
+        .map(
+          (t) =>
+            `${this.monitoringData[t].symbol}:${this.monitoringData[t].currentPrice}`,
+        )
+        .join(' | ')}`,
+    );
   }
 
   // ---------------------------------------------------
@@ -523,8 +531,19 @@ Normal 1-minute sync continues
       data.currentPrice = currentPrice;
       data.openPrice = openPrice;
 
-      data.currentDayHigh = high;
-      data.currentDayLow = low;
+      // data.currentDayHigh = high;
+      // data.currentDayLow = low;
+
+      //DO NOT override WS high/low
+      if (high > data.currentDayHigh) {
+        data.currentDayHigh = high;
+        data.currentDayHighTime = highTime;
+      }
+
+      if (low < data.currentDayLow) {
+        data.currentDayLow = low;
+        data.currentDayLowTime = lowTime;
+      }
 
       // -------------------------------
       // Dynamic GAP Adjustment (backup)
@@ -607,7 +626,8 @@ getQuotes BANKNIFTY
   // function to sync time series (MAIN ADDITION)
   private async syncTokenTimeSeries(exchange: string, token: string) {
     const end = Math.floor(Date.now() / 1000);
-    const start = end - 60 * 10; // last 10 minutes
+    // const start = end - 60 * 10; // last 10 minutes
+    const start = this.getEpochTime(9, 15); // full day works correctly
 
     // const series = await this.marketService.getTimePriceSeries({
     //   exchange,
@@ -993,6 +1013,15 @@ system continues running
       }
 
       // log debug area
+      tick?.tk === '51714'
+        ? this.logger.debug(
+            `getting data ld: 996 ${tick?.lp} for token :  ${tick?.tk}`,
+          )
+        : '';
+
+      // this.logger.debug(
+      //   `getting data ld: 996 ${tick?.lp} for token :  ${tick.tk}`,
+      // );
 
       //     // this.logger.debug(
       //     //   `getting tick data test high for ${tick.tk}`,
@@ -1027,6 +1056,15 @@ system continues running
 
       const now = this.getISTTime();
 
+      // -------------------------------
+      // CRITICAL DEBUG LOGS
+      // -------------------------------
+      this.logger.debug(
+        `[WS] ${data.symbol} | Price: ${price} | High: ${data.currentDayHigh} | Low: ${data.currentDayLow}`,
+      );
+      // checking price upate
+      // this.logger.debug(`getting data ld: 1034 ${price} for token :  ${token}`);
+
       const timeString = now
         .toLocaleString('en-GB', { timeZone: 'Asia/Kolkata' })
         .replace(',', '');
@@ -1050,6 +1088,9 @@ system continues running
       // -------------------------------
       // Update Day High
       // -------------------------------
+      this.logger.debug(
+        `[CRON BEFORE] ${data.symbol} | High: ${data.currentDayHigh} | Low: ${data.currentDayLow}`,
+      );
 
       if (wsHigh > data.currentDayHigh && data.currentDayHigh > 0) {
         data.currentDayHigh = wsHigh;
@@ -1064,6 +1105,10 @@ system continues running
         data.currentDayLow = wsLow;
         data.currentDayLowTime = timeString;
       }
+
+      this.logger.debug(
+        `[CRON AFTER] ${data.symbol} | High: ${data.currentDayHigh} | Low: ${data.currentDayLow}`,
+      );
 
       // -------------------------------
       // Dynamic GAP Adjustment
@@ -1101,7 +1146,8 @@ system continues running
 
       const nowTs = Date.now();
 
-      if (nowTs - this.lastSave > 2000) {
+      if (nowTs - this.lastSave > 1000) {
+        this.logger.debug(`Saving JSON from WS for ${data.symbol}`);
         this.saveFile();
         this.lastSave = nowTs;
       }

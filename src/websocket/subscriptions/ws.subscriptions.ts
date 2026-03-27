@@ -4,7 +4,8 @@ export const WS_SUBSCRIPTIONS = {
   DEFAULT: [
     // 'NSE|2885', // RELIANCE
     // 'NSE|1594', // INFY
-    'NFO|49229', // NIFTY FUT
+    'NFO|51714', // NIFTY FUT
+    'NFO|51701', // BANKNIFTY FUT
     'MCX|472780', // GOLDM
     // 'NFO|58751', // nifty call FUT
     'NSE|2475', //ONGC
