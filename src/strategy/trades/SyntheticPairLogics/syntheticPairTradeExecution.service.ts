@@ -106,9 +106,9 @@ export class SyntheticPairTradeExecutionService implements OnModuleInit {
   private apiQueue: Promise<any> = Promise.resolve();
 
   private readonly INDICES = [
-    { exchange: 'NFO', token: '51714', symbol: 'NIFTY30MAR26F' },
+    { exchange: 'NFO', token: '66691', symbol: 'NIFTY28APR26F' },
     // { exchange: 'BSE', token: '1', symbol: 'SENSEX' },
-    { exchange: 'NFO', token: '51701', symbol: 'BANKNIFTY30MAR26F' },
+    { exchange: 'NFO', token: '66688', symbol: 'BANKNIFTY28APR26F' },
   ];
 
   constructor(
